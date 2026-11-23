@@ -1,4 +1,4 @@
-import json, os, re, time, urllib.request, datetime as dt
+import json, os, re, time, urllib.request, urllib.error, datetime as dt
 import xml.etree.ElementTree as ET
 
 FEEDS = [
@@ -11,6 +11,9 @@ KEY = os.environ["GEMINI_API_KEY"]
 TOPIC = os.environ["NTFY_TOPIC"]
 UA = {"User-Agent": "Mozilla/5.0 wow-brief"}
 API = "https://generativelanguage.googleapis.com/v1beta/models"
+PREFER = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite",
+          "gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash",
+          "gemini-3.8-flash", "gemini-flash-lite-latest", "gemini-flash-latest"]
 TITLES = {"class_changes": "Class changes", "rankings_sims": "Rankings and sims",
           "auction_house": "Auction House", "strategy": "Gold strategy", "game_news": "Game news"}
 PROMPT = """You filter World of Warcraft: Forever news for a busy player.
@@ -55,12 +58,9 @@ def pick_models():
                 names.append(m["name"].split("/")[-1])
     except Exception as e:
         print("Model list failed:", e)
-    bad = ("image", "tts", "live", "audio", "embedding", "robotics", "computer", "dialog")
-    c = [n for n in names if "flash" in n and not any(b in n for b in bad)]
-    c.sort(reverse=True)
-    c.sort(key=lambda n: ("preview" in n or "exp" in n, "lite" in n))
-    print("Candidates:", c)
-    return c[:4] + ["gemini-flash-latest"]
+    order = [m for m in PREFER if m in names] or PREFER
+    print("Will try:", order)
+    return order
 
 seen = set(json.load(open("seen.json"))) if os.path.exists("seen.json") else set()
 new, errors = {}, []
@@ -72,7 +72,7 @@ for f in FEEDS:
     except Exception as e:
         errors.append(f + ": " + str(e))
 print("Feed errors:", errors)
-batch = list(new.values())[:25]
+batch = list(new.values())[:20]
 print("New items:", len(batch))
 
 if batch:
@@ -86,9 +86,14 @@ if batch:
                           {"Content-Type": "application/json", "x-goog-api-key": KEY}, timeout=90)
                 print("Used model:", model)
                 break
+            except urllib.error.HTTPError as e:
+                print(model, attempt, e)
+                if e.code in (429, 404, 400, 403):
+                    break
+                time.sleep(8)
             except Exception as e:
                 print(model, attempt, e)
-                time.sleep(5)
+                time.sleep(8)
         if raw:
             break
     if not raw:

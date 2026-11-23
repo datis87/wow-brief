@@ -10,7 +10,8 @@ body{margin:0;padding:12px;background:var(--bg);color:var(--fg);font:16px/1.45 s
 h1{font-size:1.3rem;margin:4px 0}
 .sub{color:var(--mut);font-size:.85rem;margin-bottom:10px}
 input{width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--fg);font-size:1rem}
-.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.lbl{color:var(--mut);font-size:.75rem;margin-top:10px;text-transform:uppercase;letter-spacing:.04em}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
 .chip{border:1px solid var(--acc);color:var(--acc);background:transparent;border-radius:16px;padding:6px 12px;font-size:.85rem;cursor:pointer}
 .chip.on{background:var(--acc);color:var(--bg)}
 h2{font-size:.95rem;color:var(--mut);margin:18px 0 6px}
@@ -24,22 +25,31 @@ a.btn{display:inline-block;margin-top:8px;color:var(--acc);font-weight:600;text-
 <h1>WoW Forever Brief</h1>
 <div class="sub" id="upd">Loading...</div>
 <input id="q" placeholder="Keywords, comma separated. Use -word to hide" autocomplete="off">
+<div class="lbl">Categories</div>
 <div class="chips" id="chips"></div>
+<div class="lbl">Class changes: pick your classes (none picked = all)</div>
+<div class="chips" id="cchips"></div>
 <div id="list"></div>
 <script>
 const CATS={class_changes:"Class changes",auction_house:"Auction House",rankings_sims:"Rankings & sims",strategy:"Gold strategy",game_news:"Game news"};
-let off=new Set(),q="",data=[];
-try{off=new Set(JSON.parse(localStorage.getItem("off")||"[]"));q=localStorage.getItem("q")||""}catch(e){}
+const CLS=["Druid","Hunter","Mage","Paladin","Priest","Rogue","Shaman","Warlock","Warrior","General"];
+let off=new Set(),cls=new Set(),q="",data=[];
+try{off=new Set(JSON.parse(localStorage.getItem("off")||"[]"));cls=new Set(JSON.parse(localStorage.getItem("cls")||"[]"));q=localStorage.getItem("q")||""}catch(e){}
 const $=id=>document.getElementById(id);
-function save(){try{localStorage.setItem("off",JSON.stringify([...off]));localStorage.setItem("q",q)}catch(e){}}
+function save(){try{localStorage.setItem("off",JSON.stringify([...off]));localStorage.setItem("cls",JSON.stringify([...cls]));localStorage.setItem("q",q)}catch(e){}}
 function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
-function chips(){const box=$("chips");box.textContent="";
+function chips(){
+ const box=$("chips");box.textContent="";
  for(const k in CATS){const b=el("button","chip"+(off.has(k)?"":" on"),CATS[k]);
-  b.onclick=()=>{off.has(k)?off.delete(k):off.add(k);save();chips();render()};box.appendChild(b)}}
+  b.onclick=()=>{off.has(k)?off.delete(k):off.add(k);save();chips();render()};box.appendChild(b)}
+ const cb=$("cchips");cb.textContent="";
+ for(const c of CLS){const b=el("button","chip"+(cls.has(c)?" on":""),c);
+  b.onclick=()=>{cls.has(c)?cls.delete(c):cls.add(c);save();chips();render()};cb.appendChild(b)}}
 function match(e){
  if(off.has(e.cat))return false;
+ if(e.cat==="class_changes"&&cls.size&&!(e.cls&&cls.has(e.cls)))return false;
  const words=q.toLowerCase().split(",").map(s=>s.trim()).filter(Boolean);
- const txt=(e.headline+" "+e.summary+" "+e.so_what).toLowerCase();
+ const txt=(e.headline+" "+e.summary+" "+e.so_what+" "+(e.cls||"")).toLowerCase();
  const inc=words.filter(w=>w[0]!=="-"),exc=words.filter(w=>w[0]==="-").map(w=>w.slice(1)).filter(Boolean);
  if(exc.some(w=>txt.includes(w)))return false;
  return !inc.length||inc.some(w=>txt.includes(w))}
@@ -51,7 +61,8 @@ function render(){const list=$("list");list.textContent="";
   const d=new Date(e.ts);const label=d.toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"});
   if(label!==day){day=label;list.appendChild(el("h2","",label))}
   const c=el("div","card");
-  c.appendChild(el("div","tag",(CATS[e.cat]||e.cat)+" · "+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})));
+  const tag=(CATS[e.cat]||e.cat)+(e.cls?" · "+e.cls:"")+" · "+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+  c.appendChild(el("div","tag",tag));
   c.appendChild(el("div","hl",e.headline));
   c.appendChild(el("div","",e.summary));
   c.appendChild(el("div","sw","So what: "+e.so_what));

@@ -1,7 +1,7 @@
 name: wow-brief
 on:
   schedule:
-    - cron: "0 14,18,23 * * *"
+    - cron: "0 7,11,16 * * *"
   workflow_dispatch:
 permissions:
   contents: write

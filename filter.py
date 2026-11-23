@@ -11,6 +11,7 @@ FEEDS = [
 ]
 MAX_AGE_DAYS = 4
 MAX_PER_TOPIC = 3
+MAX_PARENT = 6
 KEEP = 400
 FULLTEXT_MAX = 6
 PAGE_URL = "https://datis87.github.io/wow-brief/"
@@ -208,22 +209,26 @@ else:
 
     counts, extra, pushed = {}, 0, 0
     for cat, cls, e in items:
-        if cat == "class_changes" and cls in CLASSES:
-            suffix = "class-" + cls.lower()
-            title = "WoW Forever - " + cls
-        else:
-            suffix = SUFFIX.get(cat, "news")
-            title = "WoW Forever - " + TITLES.get(cat, "News")
-        counts[suffix] = counts.get(suffix, 0) + 1
-        if counts[suffix] > MAX_PER_TOPIC:
-            extra += 1
-            continue
         msg = e["headline"] + "\n" + e["summary"] + "\nSo what: " + e["so_what"]
-        try:
-            push(suffix, title, msg, e["link"])
-            pushed += 1
-        except Exception as ex:
-            print("Push failed:", ex)
+        if cat == "class_changes":
+            targets = [("class", "WoW Forever - Class changes (" + cls + ")", MAX_PARENT)]
+            if cls in CLASSES:
+                targets.append(("class-" + cls.lower(), "WoW Forever - " + cls, MAX_PER_TOPIC))
+        else:
+            targets = [(SUFFIX.get(cat, "news"), "WoW Forever - " + TITLES.get(cat, "News"), MAX_PER_TOPIC)]
+        sent = False
+        for suffix, title, cap in targets:
+            if counts.get(suffix, 0) >= cap:
+                continue
+            try:
+                push(suffix, title, msg, e["link"])
+                counts[suffix] = counts.get(suffix, 0) + 1
+                pushed += 1
+                sent = True
+            except Exception as ex:
+                print("Push failed:", ex)
+        if not sent:
+            extra += 1
     if extra > 0:
         try:
             push("", "WoW Forever - More", str(extra) + " more stories on the page. Tap to open.", PAGE_URL)

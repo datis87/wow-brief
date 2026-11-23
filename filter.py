@@ -84,4 +84,8 @@ if batch:
         msg = "\n\n".join(f"{e['headline']}\n{e['summary']}\nSo what: {e['so_what']}\n{e['link']}" for e in entries)
         md += f"\n## {TITLES.get(cat, cat)}\n\n{msg}\n"
         get(f"https://ntfy.sh/{TOPIC}", msg[:3500].encode(),
-            {"Title": "WoW Forever - " + TITLES.get(cat
+            {"Title": "WoW Forever - " + TITLES.get(cat, "News"), "Click": entries[0]["link"]})
+    os.makedirs("digests", exist_ok=True)
+    open(f"digests/{stamp}.md", "w").write(md)
+    seen |= {i["link"] for i in batch}
+    json.dump(sorted(seen), open("seen.json", "w"))

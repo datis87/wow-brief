@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WoW Forever Brief</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--mut:#666;--card:#f3f4f6;--acc:#1f7a68;--bd:#d8dbe0}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--fg:#e8e8e8;--mut:#9aa4b0;--card:#181d25;--acc:#4fb8a3;--bd:#2a313c}}
+*{box-sizing:border-box}
+body{margin:0;padding:12px;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,sans-serif;max-width:720px;margin-inline:auto}
+h1{font-size:1.3rem;margin:4px 0}
+.sub{color:var(--mut);font-size:.85rem;margin-bottom:10px}
+input{width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--fg);font-size:1rem}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.chip{border:1px solid var(--acc);color:var(--acc);background:transparent;border-radius:16px;padding:6px 12px;font-size:.85rem;cursor:pointer}
+.chip.on{background:var(--acc);color:var(--bg)}
+h2{font-size:.95rem;color:var(--mut);margin:18px 0 6px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin:8px 0}
+.tag{font-size:.72rem;color:var(--acc);text-transform:uppercase;letter-spacing:.04em}
+.hl{font-weight:600;margin:2px 0 4px}
+.sw{color:var(--mut);font-size:.9rem;margin-top:4px}
+a.btn{display:inline-block;margin-top:8px;color:var(--acc);font-weight:600;text-decoration:none}
+.empty{color:var(--mut);text-align:center;margin:30px 0}
+</style></head><body>
+<h1>WoW Forever Brief</h1>
+<div class="sub" id="upd">Loading...</div>
+<input id="q" placeholder="Keywords, comma separated. Use -word to hide" autocomplete="off">
+<div class="chips" id="chips"></div>
+<div id="list"></div>
+<script>
+const CATS={class_changes:"Class changes",auction_house:"Auction House",rankings_sims:"Rankings & sims",strategy:"Gold strategy",game_news:"Game news"};
+let off=new Set(),q="",data=[];
+try{off=new Set(JSON.parse(localStorage.getItem("off")||"[]"));q=localStorage.getItem("q")||""}catch(e){}
+const $=id=>document.getElementById(id);
+function save(){try{localStorage.setItem("off",JSON.stringify([...off]));localStorage.setItem("q",q)}catch(e){}}
+function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
+function chips(){const box=$("chips");box.textContent="";
+ for(const k in CATS){const b=el("button","chip"+(off.has(k)?"":" on"),CATS[k]);
+  b.onclick=()=>{off.has(k)?off.delete(k):off.add(k);save();chips();render()};box.appendChild(b)}}
+function match(e){
+ if(off.has(e.cat))return false;
+ const words=q.toLowerCase().split(",").map(s=>s.trim()).filter(Boolean);
+ const txt=(e.headline+" "+e.summary+" "+e.so_what).toLowerCase();
+ const inc=words.filter(w=>w[0]!=="-"),exc=words.filter(w=>w[0]==="-").map(w=>w.slice(1)).filter(Boolean);
+ if(exc.some(w=>txt.includes(w)))return false;
+ return !inc.length||inc.some(w=>txt.includes(w))}
+function render(){const list=$("list");list.textContent="";
+ const rows=data.filter(match);
+ if(!rows.length){list.appendChild(el("div","empty","Nothing matches your filters."));return}
+ let day="";
+ for(const e of rows){
+  const d=new Date(e.ts);const label=d.toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"});
+  if(label!==day){day=label;list.appendChild(el("h2","",label))}
+  const c=el("div","card");
+  c.appendChild(el("div","tag",(CATS[e.cat]||e.cat)+" · "+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})));
+  c.appendChild(el("div","hl",e.headline));
+  c.appendChild(el("div","",e.summary));
+  c.appendChild(el("div","sw","So what: "+e.so_what));
+  if(/^https?:\/\//.test(e.link)){const a=el("a","btn","Read article");a.href=e.link;a.target="_blank";a.rel="noopener";c.appendChild(a)}
+  list.appendChild(c)}}
+$("q").value=q;
+$("q").oninput=ev=>{q=ev.target.value;save();render()};
+chips();
+fetch("data.json?"+Date.now()).then(r=>r.json()).then(j=>{
+ data=j.entries||[];
+ $("upd").textContent="Updated "+new Date(j.updated).toLocaleString();render()
+}).catch(()=>{$("upd").textContent="No data yet. Run the workflow once."});
+</script></body></html>

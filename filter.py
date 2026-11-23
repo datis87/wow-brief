@@ -1,13 +1,13 @@
-import json, os, re, urllib.request, datetime as dt
+import json, os, re, time, urllib.request, datetime as dt
 import xml.etree.ElementTree as ET
 
 FEEDS = [
- "https://www.warcrafttavern.com/forever/news/feed/",
+ "https://www.warcrafttavern.com/feed/",
  "https://blizzardwatch.com/category/warcraft/wow-forever/feed/",
  "https://massivelyop.com/feed/",
  "https://www.wowhead.com/news/rss/all",
 ]
-MODEL = "gemini-flash-latest"
+MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
 KEY = os.environ["GEMINI_API_KEY"]
 TOPIC = os.environ["NTFY_TOPIC"]
 UA = {"User-Agent": "Mozilla/5.0 wow-brief"}
@@ -25,7 +25,7 @@ Do not invent facts beyond the item text. If unsure, say so. Items:
 
 def get(url, data=None, headers=None):
     req = urllib.request.Request(url, data=data, headers={**UA, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=60) as r:
         return r.read()
 
 def parse(b):
@@ -55,11 +55,26 @@ for f in FEEDS:
         errors.append(f"{f}: {e}")
 print("Feed errors:", errors)
 batch = list(new.values())[:40]
+print("New items:", len(batch))
+
 if batch:
     body = json.dumps({"contents": [{"parts": [{"text": PROMPT + json.dumps(batch)}]}],
                        "generationConfig": {"responseMimeType": "application/json"}}).encode()
-    raw = get(f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent",
-              body, {"Content-Type": "application/json", "x-goog-api-key": KEY})
+    raw = None
+    for model in MODELS:
+        for attempt in range(3):
+            try:
+                raw = get(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                          body, {"Content-Type": "application/json", "x-goog-api-key": KEY})
+                break
+            except Exception as e:
+                print(model, attempt, e)
+                time.sleep(10 * (attempt + 1))
+        if raw:
+            break
+    if not raw:
+        raise SystemExit("Gemini unavailable, will retry next run")
+
     out = json.loads(json.loads(raw)["candidates"][0]["content"]["parts"][0]["text"])
     stamp = dt.datetime.utcnow().strftime("%Y-%m-%d-%H%M")
     md = f"# Digest {stamp} UTC\n"
@@ -69,8 +84,4 @@ if batch:
         msg = "\n\n".join(f"{e['headline']}\n{e['summary']}\nSo what: {e['so_what']}\n{e['link']}" for e in entries)
         md += f"\n## {TITLES.get(cat, cat)}\n\n{msg}\n"
         get(f"https://ntfy.sh/{TOPIC}", msg[:3500].encode(),
-            {"Title": "WoW Forever - " + TITLES.get(cat, "News"), "Click": entries[0]["link"]})
-    os.makedirs("digests", exist_ok=True)
-    open(f"digests/{stamp}.md", "w").write(md)
-    seen |= {i["link"] for i in batch}
-    json.dump(sorted(seen), open("seen.json", "w"))
+            {"Title": "WoW Forever - " + TITLES.get(cat

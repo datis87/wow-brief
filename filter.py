@@ -7,10 +7,10 @@ FEEDS = [
  "https://massivelyop.com/feed/",
  "https://www.wowhead.com/news/rss/all",
 ]
-MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
 KEY = os.environ["GEMINI_API_KEY"]
 TOPIC = os.environ["NTFY_TOPIC"]
 UA = {"User-Agent": "Mozilla/5.0 wow-brief"}
+API = "https://generativelanguage.googleapis.com/v1beta/models"
 TITLES = {"class_changes": "Class changes", "rankings_sims": "Rankings and sims",
           "auction_house": "Auction House", "strategy": "Gold strategy", "game_news": "Game news"}
 PROMPT = """You filter World of Warcraft: Forever news for a busy player.
@@ -23,9 +23,9 @@ Each entry: {"headline":"","summary":"1-2 sentences","so_what":"one sentence: wh
 Do not invent facts beyond the item text. If unsure, say so. Items:
 """
 
-def get(url, data=None, headers=None):
+def get(url, data=None, headers=None, timeout=60):
     req = urllib.request.Request(url, data=data, headers={**UA, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=60) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
 
 def parse(b):
@@ -36,13 +36,31 @@ def parse(b):
         d = {}
         for c in it:
             t = c.tag.split("}")[-1]
-            if t == "title": d["title"] = (c.text or "").strip()
-            elif t == "link": d["link"] = (c.text or c.get("href") or "").strip()
+            if t == "title":
+                d["title"] = (c.text or "").strip()
+            elif t == "link":
+                d["link"] = (c.text or c.get("href") or "").strip()
             elif t in ("description", "summary") and "text" not in d:
-                d["text"] = re.sub("<[^>]+>", " ", c.text or "")[:400]
+                d["text"] = re.sub("<[^>]+>", " ", c.text or "")[:300]
         if d.get("link") and d.get("title"):
             items.append(d)
     return items
+
+def pick_models():
+    names = []
+    try:
+        raw = get(API + "?pageSize=200", headers={"x-goog-api-key": KEY})
+        for m in json.loads(raw).get("models", []):
+            if "generateContent" in m.get("supportedGenerationMethods", []):
+                names.append(m["name"].split("/")[-1])
+    except Exception as e:
+        print("Model list failed:", e)
+    bad = ("image", "tts", "live", "audio", "embedding", "robotics", "computer", "dialog")
+    c = [n for n in names if "flash" in n and not any(b in n for b in bad)]
+    c.sort(reverse=True)
+    c.sort(key=lambda n: ("preview" in n or "exp" in n, "lite" in n))
+    print("Candidates:", c)
+    return c[:4] + ["gemini-flash-latest"]
 
 seen = set(json.load(open("seen.json"))) if os.path.exists("seen.json") else set()
 new, errors = {}, []
@@ -52,24 +70,25 @@ for f in FEEDS:
             if i["link"] not in seen:
                 new[i["link"]] = i
     except Exception as e:
-        errors.append(f"{f}: {e}")
+        errors.append(f + ": " + str(e))
 print("Feed errors:", errors)
-batch = list(new.values())[:40]
+batch = list(new.values())[:25]
 print("New items:", len(batch))
 
 if batch:
     body = json.dumps({"contents": [{"parts": [{"text": PROMPT + json.dumps(batch)}]}],
                        "generationConfig": {"responseMimeType": "application/json"}}).encode()
     raw = None
-    for model in MODELS:
-        for attempt in range(3):
+    for model in pick_models():
+        for attempt in range(2):
             try:
-                raw = get(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                          body, {"Content-Type": "application/json", "x-goog-api-key": KEY})
+                raw = get(API + "/" + model + ":generateContent", body,
+                          {"Content-Type": "application/json", "x-goog-api-key": KEY}, timeout=90)
+                print("Used model:", model)
                 break
             except Exception as e:
                 print(model, attempt, e)
-                time.sleep(10 * (attempt + 1))
+                time.sleep(5)
         if raw:
             break
     if not raw:
@@ -77,15 +96,16 @@ if batch:
 
     out = json.loads(json.loads(raw)["candidates"][0]["content"]["parts"][0]["text"])
     stamp = dt.datetime.utcnow().strftime("%Y-%m-%d-%H%M")
-    md = f"# Digest {stamp} UTC\n"
+    md = "# Digest " + stamp + " UTC\n"
     for cat, entries in out.items():
         if not entries:
             continue
-        msg = "\n\n".join(f"{e['headline']}\n{e['summary']}\nSo what: {e['so_what']}\n{e['link']}" for e in entries)
-        md += f"\n## {TITLES.get(cat, cat)}\n\n{msg}\n"
-        get(f"https://ntfy.sh/{TOPIC}", msg[:3500].encode(),
-            {"Title": "WoW Forever - " + TITLES.get(cat, "News"), "Click": entries[0]["link"]})
+        msg = "\n\n".join(e["headline"] + "\n" + e["summary"] + "\nSo what: " + e["so_what"] + "\n" + e["link"] for e in entries)
+        md += "\n## " + TITLES.get(cat, cat) + "\n\n" + msg + "\n"
+        title = "WoW Forever - " + TITLES.get(cat, "News")
+        link = entries[0]["link"]
+        get("https://ntfy.sh/" + TOPIC, msg[:3500].encode(), {"Title": title, "Click": link})
     os.makedirs("digests", exist_ok=True)
-    open(f"digests/{stamp}.md", "w").write(md)
+    open("digests/" + stamp + ".md", "w").write(md)
     seen |= {i["link"] for i in batch}
     json.dump(sorted(seen), open("seen.json", "w"))

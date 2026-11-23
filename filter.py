@@ -10,9 +10,11 @@ FEEDS = [
  ("https://www.wowhead.com/news/rss/all", True),
 ]
 MAX_AGE_DAYS = 4
-MAX_PER_CAT = 4
-KEEP = 300
+MAX_PER_TOPIC = 3
+KEEP = 400
+FULLTEXT_MAX = 6
 PAGE_URL = "https://datis87.github.io/wow-brief/"
+CLASSES = ["Druid", "Hunter", "Mage", "Paladin", "Priest", "Rogue", "Shaman", "Warlock", "Warrior"]
 KEY = os.environ["GEMINI_API_KEY"]
 TOPIC = os.environ["NTFY_TOPIC"]
 UA = {"User-Agent": "Mozilla/5.0 wow-brief"}
@@ -32,6 +34,11 @@ news digests, and anything not mainly about WoW Forever. Merge duplicate coverag
 Put each kept item in exactly ONE category using these strict rules:
 - class_changes: ALL hotfix and patch notes (including bug fixes and exploit fixes), plus any class, spec,
   talent, racial ability, or itemization change.
+  For this category output ONE entry PER AFFECTED CLASS, even when they share the same link.
+  Set "class" to exactly one of: Druid, Hunter, Mage, Paladin, Priest, Rogue, Shaman, Warlock, Warrior,
+  or General (for changes not tied to one class, such as dungeons, items, quests, or system bug fixes).
+  The summary must contain ONLY that class's changes, naming the spell or talent and what changed.
+  Never guess changes the item text does not state.
 - rankings_sims: tier lists, class or spec rankings, sim results, DPS or healing comparisons, PvP rankings.
 - auction_house: ONLY auction house rules, fees, listings, or market prices of tradable items.
   Vendor prices, mount discounts and gold sinks are NOT auction house.
@@ -39,8 +46,10 @@ Put each kept item in exactly ONE category using these strict rules:
 - game_news: announcements, roadmap, new content, milestones, server or system rules such as addon or
   layering rules. Use this only when no other category fits.
 Copy each link EXACTLY from the item it came from. Return JSON exactly like:
-{"class_changes":[],"auction_house":[],"rankings_sims":[],"strategy":[],"game_news":[]}
-Each entry: {"headline":"","summary":"1-2 sentences","so_what":"one sentence: what to do or watch","link":""}
+{"class_changes":[{"class":"Paladin","headline":"","summary":"","so_what":"","link":""}],
+"auction_house":[],"rankings_sims":[],"strategy":[],"game_news":[]}
+Entries in other categories have no "class" field. Each entry has headline, summary (1-2 sentences),
+so_what (one sentence: what to do or watch), and link.
 Do not invent facts beyond the item text. If unsure, say so. Items:
 """
 
@@ -83,6 +92,16 @@ def when(s):
         t = t.replace(tzinfo=dt.timezone.utc)
     return t
 
+def fulltext(url):
+    try:
+        h = get(url, timeout=30).decode("utf-8", "ignore")
+        h = re.sub(r"(?is)<(script|style|nav|header|footer|aside)[^>]*>.*?</\1>", " ", h)
+        t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", h))
+        return t[:5000]
+    except Exception as e:
+        print("Fulltext failed:", url, e)
+        return ""
+
 def pick_models():
     names = []
     try:
@@ -124,6 +143,17 @@ print("Feed errors:", errors)
 batch = list(new.values())[:20]
 print("New items:", len(batch), "Skipped:", len(skipped))
 
+fetched = 0
+for i in batch:
+    if fetched >= FULLTEXT_MAX:
+        break
+    if re.search(r"hotfix|patch|class|balance|changes|update", i["title"], re.I):
+        full = fulltext(i["link"])
+        if len(full) > 400:
+            i["text"] = full
+        fetched += 1
+print("Full texts fetched:", fetched)
+
 if not batch:
     save(seen | skipped)
 else:
@@ -134,7 +164,7 @@ else:
         for attempt in range(2):
             try:
                 raw = get(API + "/" + model + ":generateContent", body,
-                          {"Content-Type": "application/json", "x-goog-api-key": KEY}, timeout=90)
+                          {"Content-Type": "application/json", "x-goog-api-key": KEY}, timeout=120)
                 print("Used model:", model)
                 break
             except urllib.error.HTTPError as e:
@@ -156,24 +186,41 @@ else:
     md = "# Digest " + stamp + " UTC\n"
     items, done = [], set()
     for cat in ORDER + [c for c in out if c not in ORDER]:
-        entries = [e for e in out.get(cat, []) if e.get("link") in valid and e["link"] not in done]
-        if not entries:
-            continue
-        md += "\n## " + TITLES.get(cat, cat) + "\n"
-        for e in entries:
-            done.add(e["link"])
-            md += "\n" + e["headline"] + "\n" + e["summary"] + "\nSo what: " + e["so_what"] + "\n" + e["link"] + "\n"
-            items.append((cat, e))
+        md_head = False
+        for e in out.get(cat, []):
+            if e.get("link") not in valid:
+                continue
+            cls = ""
+            if cat == "class_changes":
+                cls = str(e.get("class", "General")).strip().title()
+                if cls not in CLASSES:
+                    cls = "General"
+            key = (e["link"], cls)
+            if key in done:
+                continue
+            done.add(key)
+            if not md_head:
+                md += "\n## " + TITLES.get(cat, cat) + "\n"
+                md_head = True
+            tag = "[" + cls + "] " if cls else ""
+            md += "\n" + tag + e["headline"] + "\n" + e["summary"] + "\nSo what: " + e["so_what"] + "\n" + e["link"] + "\n"
+            items.append((cat, cls, e))
 
     counts, extra, pushed = {}, 0, 0
-    for cat, e in items:
-        counts[cat] = counts.get(cat, 0) + 1
-        if counts[cat] > MAX_PER_CAT:
+    for cat, cls, e in items:
+        if cat == "class_changes" and cls in CLASSES:
+            suffix = "class-" + cls.lower()
+            title = "WoW Forever - " + cls
+        else:
+            suffix = SUFFIX.get(cat, "news")
+            title = "WoW Forever - " + TITLES.get(cat, "News")
+        counts[suffix] = counts.get(suffix, 0) + 1
+        if counts[suffix] > MAX_PER_TOPIC:
             extra += 1
             continue
         msg = e["headline"] + "\n" + e["summary"] + "\nSo what: " + e["so_what"]
         try:
-            push(SUFFIX.get(cat, "news"), "WoW Forever - " + TITLES.get(cat, "News"), msg, e["link"])
+            push(suffix, title, msg, e["link"])
             pushed += 1
         except Exception as ex:
             print("Push failed:", ex)
@@ -193,12 +240,13 @@ else:
     except Exception:
         pass
     ts = now.isoformat()
-    fresh = [{"ts": ts, "cat": c, "headline": e["headline"], "summary": e["summary"],
-              "so_what": e["so_what"], "link": e["link"]} for c, e in items]
-    merged, links = [], set()
+    fresh = [{"ts": ts, "cat": c, "cls": k, "headline": e["headline"], "summary": e["summary"],
+              "so_what": e["so_what"], "link": e["link"]} for c, k, e in items]
+    merged, keys = [], set()
     for x in fresh + old_entries:
-        if x["link"] not in links:
-            links.add(x["link"])
+        kk = x["link"] + "|" + x.get("cls", "")
+        if kk not in keys:
+            keys.add(kk)
             merged.append(x)
     json.dump({"updated": ts, "entries": merged[:KEEP]}, open("docs/data.json", "w"))
     save(seen | skipped | valid)

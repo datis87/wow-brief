@@ -1,4 +1,4 @@
-import json, os, re, time, urllib.request, urllib.error, datetime as dt
+import json, os, re, time, urllib.request, urllib.error, urllib.parse, datetime as dt
 import email.utils
 import xml.etree.ElementTree as ET
 
@@ -59,6 +59,13 @@ def get(url, data=None, headers=None, timeout=60):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
 
+def host(link):
+    try:
+        h = urllib.parse.urlparse(link).netloc.lower()
+        return h[4:] if h.startswith("www.") else h
+    except Exception:
+        return ""
+
 def parse(b):
     items = []
     for it in ET.fromstring(b).iter():
@@ -75,7 +82,7 @@ def parse(b):
                 d["text"] = re.sub("<[^>]+>", " ", c.text or "")[:300]
             elif t in ("pubDate", "published", "updated", "date") and "date" not in d:
                 d["date"] = (c.text or "").strip()
-        if d.get("link") and d.get("title"):
+        if d.get("link", "").startswith(("http://", "https://")) and d.get("title"):
             items.append(d)
     return items
 
@@ -113,6 +120,10 @@ def pick_models():
     except Exception as e:
         print("Model list failed:", e)
     order = [m for m in PREFER if m in names] or PREFER
+    forced = os.environ.get("GEMINI_MODEL", "").strip()
+    if forced:
+        print("Model override:", forced)
+        order = [forced] + [m for m in order if m != forced]
     print("Will try:", order)
     return order
 
@@ -250,13 +261,15 @@ else:
     except Exception:
         pass
     ts = now.isoformat()
-    fresh = [{"ts": ts, "cat": c, "cls": k, "headline": e["headline"], "summary": e["summary"],
-              "so_what": e["so_what"], "link": e["link"]} for c, k, e in items]
+    fresh = [{"ts": ts, "cat": c, "cls": k, "src": host(e["link"]), "headline": e["headline"],
+              "summary": e["summary"], "so_what": e["so_what"], "link": e["link"]} for c, k, e in items]
     merged, keys = [], set()
     for x in fresh + old_entries:
         kk = x["link"] + "|" + x.get("cls", "")
         if kk not in keys:
             keys.add(kk)
+            if not x.get("src"):
+                x["src"] = host(x["link"])
             merged.append(x)
     json.dump({"updated": ts, "entries": merged[:KEEP]}, open("docs/data.json", "w"))
     save(seen | skipped | valid)

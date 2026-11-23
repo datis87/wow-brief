@@ -10,7 +10,8 @@ FEEDS = [
  ("https://www.wowhead.com/news/rss/all", True),
 ]
 MAX_AGE_DAYS = 4
-MAX_PUSH = 8
+MAX_PUSH = 5
+DIGEST_URL = "https://github.com/datis87/wow-brief/tree/main/digests"
 KEY = os.environ["GEMINI_API_KEY"]
 TOPIC = os.environ["NTFY_TOPIC"]
 UA = {"User-Agent": "Mozilla/5.0 wow-brief"}
@@ -18,15 +19,23 @@ API = "https://generativelanguage.googleapis.com/v1beta/models"
 PREFER = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite",
           "gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash",
           "gemini-3.8-flash", "gemini-flash-lite-latest", "gemini-flash-latest"]
+ORDER = ["class_changes", "auction_house", "rankings_sims", "strategy", "game_news"]
 TITLES = {"class_changes": "Class changes", "rankings_sims": "Rankings and sims",
           "auction_house": "Auction House", "strategy": "Gold strategy", "game_news": "Game news"}
 PROMPT = """You filter World of Warcraft: Forever news for a busy player.
-Use ONLY the items below. Keep items with real substance: hotfix/patch notes, class or spec changes,
-balance or tier analysis, sim data, Auction House/economy changes, gold strategies, major announcements.
-Drop clickbait, rumors, promos, giveaways, Twitch drops, cosmetic or art updates, boosting or gold-selling ads,
-duplicates, weekly roundups or news digests, and anything not mainly about WoW Forever.
-Merge duplicate coverage into one entry. Copy each link EXACTLY from the item it came from. Return JSON exactly like:
-{"class_changes":[],"rankings_sims":[],"auction_house":[],"strategy":[],"game_news":[]}
+Use ONLY the items below. Keep items with real substance. Drop clickbait, rumors, promos, giveaways,
+Twitch drops, cosmetic or art updates, boosting or gold-selling ads, duplicates, weekly roundups or
+news digests, and anything not mainly about WoW Forever. Merge duplicate coverage into one entry.
+Put each kept item in exactly ONE category using these strict rules:
+- class_changes: ALL hotfix and patch notes (including bug fixes and exploit fixes), plus any class, spec,
+  talent, racial ability, or itemization change.
+- rankings_sims: tier lists, class or spec rankings, sim results, DPS or healing comparisons, PvP rankings.
+- auction_house: auction house rules, fees, prices, currencies, economy or item-value changes.
+- strategy: gold-making, farming, professions and crafting, leveling routes, how-to advice.
+- game_news: announcements, roadmap, new content, milestones, server or system rules such as addon or
+  layering rules. Use this only when no other category fits.
+Copy each link EXACTLY from the item it came from. Return JSON exactly like:
+{"class_changes":[],"auction_house":[],"rankings_sims":[],"strategy":[],"game_news":[]}
 Each entry: {"headline":"","summary":"1-2 sentences","so_what":"one sentence: what to do or watch","link":""}
 Do not invent facts beyond the item text. If unsure, say so. Items:
 """
@@ -86,6 +95,9 @@ def pick_models():
 def save(seen):
     json.dump(sorted(seen), open("seen.json", "w"))
 
+def push(title, msg, link):
+    get("https://ntfy.sh/" + TOPIC, msg[:1500].encode(), {"Title": title, "Click": link})
+
 now = dt.datetime.now(dt.timezone.utc)
 seen = set(json.load(open("seen.json"))) if os.path.exists("seen.json") else set()
 new, skipped, errors = {}, set(), []
@@ -137,23 +149,31 @@ else:
     valid = {i["link"] for i in batch}
     stamp = now.strftime("%Y-%m-%d-%H%M")
     md = "# Digest " + stamp + " UTC\n"
-    pushed = 0
-    for cat, entries in out.items():
-        entries = [e for e in entries if e.get("link") in valid]
+    queue, done = [], set()
+    for cat in ORDER + [c for c in out if c not in ORDER]:
+        entries = [e for e in out.get(cat, []) if e.get("link") in valid and e["link"] not in done]
         if not entries:
             continue
         md += "\n## " + TITLES.get(cat, cat) + "\n"
         for e in entries:
+            done.add(e["link"])
             msg = e["headline"] + "\n" + e["summary"] + "\nSo what: " + e["so_what"]
             md += "\n" + msg + "\n" + e["link"] + "\n"
-            if pushed < MAX_PUSH:
-                try:
-                    get("https://ntfy.sh/" + TOPIC, msg[:1500].encode(),
-                        {"Title": "WoW Forever - " + TITLES.get(cat, "News"), "Click": e["link"]})
-                    pushed += 1
-                except Exception as ex:
-                    print("Push failed:", ex)
-    print("Pushed:", pushed)
+            queue.append(("WoW Forever - " + TITLES.get(cat, "News"), msg, e["link"]))
+    pushed = 0
+    for title, msg, link in queue[:MAX_PUSH]:
+        try:
+            push(title, msg, link)
+            pushed += 1
+        except Exception as ex:
+            print("Push failed:", ex)
+    extra = len(queue) - MAX_PUSH
+    if extra > 0:
+        try:
+            push("WoW Forever - More", str(extra) + " more stories in today's digest. Tap to open.", DIGEST_URL)
+        except Exception as ex:
+            print("Push failed:", ex)
+    print("Pushed:", pushed, "Extra:", max(extra, 0))
     os.makedirs("digests", exist_ok=True)
     open("digests/" + stamp + ".md", "w").write(md)
     save(seen | skipped | valid)

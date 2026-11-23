@@ -5,6 +5,11 @@ on:
     - cron: "52 5 * * *"
     - cron: "37 6 * * *"
   workflow_dispatch:
+    inputs:
+      model:
+        description: "Gemini model to try first (leave empty for auto)"
+        required: false
+        default: ""
 permissions:
   contents: write
 jobs:
@@ -16,6 +21,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          GEMINI_MODEL: ${{ inputs.model }}
       - run: |
           git config user.name "wow-brief"
           git config user.email "bot@users.noreply.github.com"

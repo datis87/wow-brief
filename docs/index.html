@@ -12,6 +12,7 @@ h1{font-size:1.3rem;margin:4px 0}
 input{width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--fg);font-size:1rem}
 .lbl{color:var(--mut);font-size:.75rem;margin-top:10px;text-transform:uppercase;letter-spacing:.04em}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.child{margin-left:14px;padding-left:10px;border-left:3px solid var(--acc)}
 .chip{border:1px solid var(--acc);color:var(--acc);background:transparent;border-radius:16px;padding:6px 12px;font-size:.85rem;cursor:pointer}
 .chip.on{background:var(--acc);color:var(--bg)}
 h2{font-size:.95rem;color:var(--mut);margin:18px 0 6px}
@@ -27,8 +28,10 @@ a.btn{display:inline-block;margin-top:8px;color:var(--acc);font-weight:600;text-
 <input id="q" placeholder="Keywords, comma separated. Use -word to hide" autocomplete="off">
 <div class="lbl">Categories</div>
 <div class="chips" id="chips"></div>
-<div class="lbl">Class changes: pick your classes (none picked = all)</div>
+<div id="classbox" class="child">
+<div class="lbl">Classes under Class changes</div>
 <div class="chips" id="cchips"></div>
+</div>
 <div id="list"></div>
 <script>
 const CATS={class_changes:"Class changes",auction_house:"Auction House",rankings_sims:"Rankings & sims",strategy:"Gold strategy",game_news:"Game news"};
@@ -42,7 +45,10 @@ function chips(){
  const box=$("chips");box.textContent="";
  for(const k in CATS){const b=el("button","chip"+(off.has(k)?"":" on"),CATS[k]);
   b.onclick=()=>{off.has(k)?off.delete(k):off.add(k);save();chips();render()};box.appendChild(b)}
+ $("classbox").style.display=off.has("class_changes")?"none":"block";
  const cb=$("cchips");cb.textContent="";
+ const all=el("button","chip"+(cls.size?"":" on"),"All classes");
+ all.onclick=()=>{cls.clear();save();chips();render()};cb.appendChild(all);
  for(const c of CLS){const b=el("button","chip"+(cls.has(c)?" on":""),c);
   b.onclick=()=>{cls.has(c)?cls.delete(c):cls.add(c);save();chips();render()};cb.appendChild(b)}}
 function match(e){
